@@ -54,6 +54,9 @@ async def run_query(request: QueryRequest):
                     
                     if "final_answer" in state_update:
                         yield json.dumps({"type": "answer", "data": state_update["final_answer"]}) + "\n"
+
+                    if "visualization" in state_update and state_update["visualization"]:
+                        yield json.dumps({"type": "visualization", "data": state_update["visualization"]}) + "\n"
                         
                     if "error" in state_update and state_update["error"]:
                         yield json.dumps({"type": "error", "data": state_update["error"]}) + "\n"

@@ -114,3 +114,27 @@ class SchemaManager:
         
         conn.close()
         return schema_str
+
+    def lookup_values(self, table: str, column: str, search_term: str = None, limit: int = 10) -> list:
+        """
+        Looks up distinct values in a column, optionally filtering by a search term.
+        Useful for correcting entity names (e.g. 'Brazil' vs 'Brasil').
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if search_term:
+                # Safe parameter substitution
+                query = f"SELECT DISTINCT {column} FROM {table} WHERE {column} LIKE ? LIMIT ?"
+                cursor.execute(query, (f"%{search_term}%", limit))
+            else:
+                query = f"SELECT DISTINCT {column} FROM {table} LIMIT ?"
+                cursor.execute(query, (limit,))
+                
+            values = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            return values
+        except Exception as e:
+            print(f"Error looking up values: {e}")
+            return []
