@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic SQL</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #ffffff;
+            --fg: #0a0a0a;
+            --muted: #737373;
+            --border: #e5e5e5;
+            --card-bg: #ffffff;
+            --primary: #0070f3; /* Vercel Blue-ish */
+            --radius: 8px;
+            --font-sans: 'Inter', sans-serif;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: #fafafa;
+            color: var(--fg);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            padding: 2rem;
+        }
+
+        .header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-weight: 600;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            color: var(--muted);
+        }
+
+        .input-area {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(0,112,243, 0.2);
+        }
+
+        button {
+            background-color: var(--fg);
+            color: white;
+            border: none;
+            padding: 0 1.5rem;
+            border-radius: var(--radius);
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+            border-left: 2px solid var(--border);
+            margin-bottom: 2rem;
+        }
+
+        .step {
+            position: relative;
+            margin-bottom: 1.5rem;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: fadeIn 0.3s forwards;
+        }
+
+        .step::before {
+            content: '';
+            position: absolute;
+            left: -2.4rem; /* Adjust based on padding/border */
+            top: 0.4rem;
+            width: 0.8rem;
+            height: 0.8rem;
+            background: var(--bg);
+            border: 2px solid var(--border);
+            border-radius: 50%;
+            z-index: 1;
+        }
+        
+        .step.active::before {
+            border-color: var(--primary);
+            background: var(--primary);
+        }
+
+        .step-header {
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+            color: var(--fg);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .step-type-tag {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #eee;
+            color: #555;
+            text-transform: uppercase;
+        }
+
+        .step-content {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            color: #444;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .result-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-weight: 600;
+            color: var(--muted);
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .spinner {
+             display: inline-block;
+             width: 12px;
+             height: 12px;
+             border: 2px solid rgba(0,0,0,0.1);
+             border-left-color: var(--primary);
+             border-radius: 50%;
+             animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>Agentic SQL</h1>
+        <p>Natural Language to SQL with Reasoning</p>
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="questionInput" placeholder="Ask a question about the music database..." value="Which artist has the most albums?">
+        <button id="searchBtn" onclick="runQuery()">Ask</button>
+    </div>
+
+    <div id="timeline" class="timeline" style="display: none;"></div>
+    
+    <div id="resultArea" style="display: none;">
+        <h3 style="margin-bottom: 1rem;">Final Result</h3>
+        <div id="resultContent" class="result-card"></div>
+    </div>
+</div>
+
+<script>
+    async function runQuery() {
+        const question = document.getElementById('questionInput').value;
+        if (!question.trim()) return;
+
+        const btn = document.getElementById('searchBtn');
+        const timeline = document.getElementById('timeline');
+        const resultArea = document.getElementById('resultArea');
+        const resultContent = document.getElementById('resultContent');
+
+        // Reset UI
+        btn.disabled = true;
+        btn.textContent = 'Analyzing...';
+        timeline.innerHTML = '';
+        timeline.style.display = 'block';
+        resultArea.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question })
+            });
+
+            const data = await response.json();
+
+            // Render Steps
+            if (data.steps) {
+                data.steps.forEach((step, index) => {
+                    setTimeout(() => {
+                        renderStep(step);
+                    }, index * 200); // Stagger animation slightly for effect
+                });
+            }
+
+            // Render Result
+            setTimeout(() => {
+                resultArea.style.display = 'block';
+                if (data.success && data.result) {
+                    if (typeof data.result === 'string') {
+                         resultContent.textContent = data.result;
+                    } else if (Array.isArray(data.result)) {
+                        renderTable(data.result);
+                    }
+                } else {
+                    resultContent.innerHTML = `<div style="color: red;">Error: ${data.error || "Unknown error"}</div>`;
+                }
+                
+                btn.disabled = false;
+                btn.textContent = 'Ask';
+            }, (data.steps ? data.steps.length * 200 : 0) + 500);
+
+        } catch (e) {
+            console.error(e);
+            alert("Failed to query server.");
+            btn.disabled = false;
+            btn.textContent = 'Ask';
+        }
+    }
+
+    function renderStep(step) {
+        const timeline = document.getElementById('timeline');
+        const div = document.createElement('div');
+        div.className = 'step active';
+        
+        let contentHtml = step.content;
+        
+        // Simple syntax highlighting for SQL
+        if (step.type === 'sql') {
+             contentHtml = `<code style="color: #d73a49;">${step.content}</code>`;
+        }
+        
+        div.innerHTML = `
+            <div class="step-header">
+                ${step.title}
+                <span class="step-type-tag">${step.type}</span>
+            </div>
+            <div class="step-content">${contentHtml}</div>
+        `;
+        timeline.appendChild(div);
+    }
+
+    function renderTable(rows) {
+        if (rows.length === 0) {
+            document.getElementById('resultContent').textContent = "No results found.";
+            return;
+        }
+
+        const table = document.createElement('table');
+        
+        // Header
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        rows[0].forEach(col => {
+            const th = document.createElement('th');
+            th.textContent = col;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        // Body
+        const tbody = document.createElement('tbody');
+        for (let i = 1; i < rows.length; i++) {
+            const tr = document.createElement('tr');
+            rows[i].forEach(cell => {
+                const td = document.createElement('td');
+                td.textContent = cell;
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        
+        document.getElementById('resultContent').innerHTML = '';
+        document.getElementById('resultContent').appendChild(table);
+    }
+</script>
+
+</body>
+</html>

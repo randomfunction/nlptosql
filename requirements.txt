@@ -1,0 +1,5 @@
+google-generativeai
+sqlparse
+python-dotenv
+fastapi
+uvicorn
