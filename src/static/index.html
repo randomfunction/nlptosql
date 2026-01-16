@@ -366,7 +366,7 @@
 
             // Reset UI
             btn.disabled = true;
-            btn.textContent = 'Analyzing...';
+            btn.textContent = 'Processing...';
             timeline.innerHTML = '';
             timeline.style.display = 'block';
             resultArea.style.display = 'none';
@@ -378,39 +378,65 @@
                     body: JSON.stringify({ question })
                 });
 
-                const data = await response.json();
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
 
-                // Render Steps
-                if (data.steps) {
-                    data.steps.forEach((step, index) => {
-                        setTimeout(() => {
-                            renderStep(step);
-                        }, index * 200); // Stagger animation slightly for effect
-                    });
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+
+                    // Buffer incomplete line
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const event = JSON.parse(line);
+                            handleStreamEvent(event);
+                        } catch (e) {
+                            console.error("Error parsing JSON chunk", e);
+                        }
+                    }
                 }
 
-                // Render Result
-                setTimeout(() => {
-                    resultArea.style.display = 'block';
-                    if (data.success && data.result) {
-                        if (typeof data.result === 'string') {
-                            resultContent.textContent = data.result;
-                        } else if (Array.isArray(data.result)) {
-                            renderTable(data.result);
-                        }
-                    } else {
-                        resultContent.innerHTML = `<div style="color: red;">Error: ${data.error || "Unknown error"}</div>`;
-                    }
-
-                    btn.disabled = false;
-                    btn.textContent = 'Ask';
-                }, (data.steps ? data.steps.length * 200 : 0) + 500);
+                btn.disabled = false;
+                btn.textContent = 'Ask';
 
             } catch (e) {
                 console.error(e);
                 alert("Failed to query server.");
                 btn.disabled = false;
                 btn.textContent = 'Ask';
+            }
+        }
+
+        function handleStreamEvent(event) {
+            const resultArea = document.getElementById('resultArea');
+            const resultContent = document.getElementById('resultContent');
+
+            if (event.type === 'step') {
+                renderStep(event.data);
+                // Auto scroll to bottom
+                const timeline = document.getElementById('timeline');
+                timeline.scrollTop = timeline.scrollHeight;
+            } else if (event.type === 'result') {
+                resultArea.style.display = 'block';
+                if (Array.isArray(event.data)) {
+                    renderTable(event.data);
+                } else {
+                    resultContent.textContent = JSON.stringify(event.data);
+                }
+            } else if (event.type === 'answer') {
+                // You could show natural answer in a specific div
+                // For now, let's append it to results or a new bubble
+                renderStep({ title: "AI Summary", content: event.data, type: "summary" });
+            } else if (event.type === 'error') {
+                resultArea.style.display = 'block';
+                resultContent.innerHTML += `<div style="color: red; margin-top:10px;">Error: ${event.data}</div>`;
             }
         }
 
