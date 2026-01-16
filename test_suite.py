@@ -5,7 +5,21 @@ from dotenv import load_dotenv
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from main import process_question
+from src.graph.workflow import app as graph_app
+
+# Wrapper to mimic old interface
+def process_question(query: str, details: bool = False):
+    try:
+        initial_state = {"question": query, "attempts": 0, "logs": []}
+        final_state = graph_app.invoke(initial_state)
+        
+        # Check success based on error field or result presence
+        if final_state.get("error"):
+            return False, final_state.get("error")
+            
+        return True, final_state.get("final_answer")
+    except Exception as e:
+        return False, str(e)
 
 TEST_CASES = [
     # 1. Simple / Baseline

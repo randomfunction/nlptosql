@@ -1,5 +1,5 @@
 import sqlite3
-from .llm import LLMService
+from typing import Any
 
 class SchemaManager:
     def __init__(self, db_path: str):
@@ -35,9 +35,25 @@ class SchemaManager:
             schema_str += "\n"
         
         conn.close()
-        return schema_str
+    
+    def get_structured_schema(self):
+        """Returns schema as a dict: {table_name: [{'name': col, 'type': type}, ...]}"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row[0] for row in cursor.fetchall() if not row[0].startswith("sqlite_")]
+        
+        schema = {}
+        for table in tables:
+            cursor.execute(f"PRAGMA table_info({table})")
+            # cid, name, type, notnull, dflt_value, pk
+            columns = [{"name": col[1], "type": col[2]} for col in cursor.fetchall()]
+            schema[table] = columns
+            
+        conn.close()
+        return schema
 
-    def get_relevant_tables(self, question: str, complexity: str, llm: LLMService) -> str:
+    def get_relevant_tables(self, question: str, complexity: str, llm: Any) -> str:
         # For simple queries, we might just return the whole schema if it's small,
         # but for this exercise, let's try to be smart even for simple ones if we can,
         # or stick to the plan: Keyword match for simple, LLM for complex.
@@ -58,7 +74,7 @@ class SchemaManager:
         else:
             return self._get_relevant_tables_llm(question, llm)
 
-    def _get_relevant_tables_llm(self, question: str, llm: LLMService) -> str:
+    def _get_relevant_tables_llm(self, question: str, llm: Any) -> str:
         prompt = f"""
         Given the following list of table names, identify which tables are likely relevant to answer the question.
         
