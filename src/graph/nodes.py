@@ -340,69 +340,67 @@ def node_generate_sql(state: AgentState) -> AgentState:
     error = state.get("error")
     logs = state.get("logs", [])
     
-    if error:
-        # Recovery Mode
-        logs.append({"title": f"Validation Error (Attempt {state.get('attempts',0)})", "content": error, "type": "error"})
-        
-        prompt_template = """
-        You are fixing a broken SQL query.
-        Schema: {schema}
-        Question: {question}
-        Previous Failed SQL: {prev_sql}
-        Error Message: {error}
-        
-        Return ONLY the corrected SQL.
-        """
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        chain = prompt | get_llm()
-        response = chain.invoke({
-            "schema": schema, 
-            "question": question, 
-            "prev_sql": state.get("sql"), 
-            "error": error
-        })
-    else:
-        # Normal Mode
-        prompt_template = """
-        Generate a safe, efficient SQLite query.
-        Schema: {schema}
-        Question: {question}
-        Plan: {plan}
-        
-        Rules:
-        1. Read-only (SELECT only).
-        2. LIMIT 1000 unless aggregation.
-        3. Use CTEs for complex logic.
-        
-        Return ONLY the SQL.
-        """
-    prompt = ChatPromptTemplate.from_template(prompt_template)
-    chain = prompt | get_llm()
-    
     def clean_sql(text: str) -> str:
         import re
         # 1. Try to find markdown block
         match = re.search(r"```(?:sql)?(.*?)```", text, re.DOTALL | re.IGNORECASE)
         if match:
-             return match.group(1).strip()
+            return match.group(1).strip()
         
         # 2. If no markdown, try to find the start of the query
-        # Look for SELECT or WITH (common starts)
         match = re.search(r"^\s*(WITH|SELECT)\s", text, re.IGNORECASE | re.MULTILINE)
         if match:
-             start_index = match.start()
-             return text[start_index:].strip()
+            start_index = match.start()
+            return text[start_index:].strip()
              
         # 3. Fallback: just strip
         return text.strip()
-
+    
     try:
-        response = chain.invoke({
-            "schema": schema, 
-            "question": question, 
-            "plan": plan
-        })
+        if error:
+            # Recovery Mode - Fix broken SQL
+            logs.append({"title": f"Validation Error (Attempt {state.get('attempts',0)})", "content": error, "type": "error"})
+            
+            prompt_template = """You are fixing a broken SQL query.
+Schema: {schema}
+Question: {question}
+Previous Failed SQL: {prev_sql}
+Error Message: {error}
+
+Return ONLY the corrected SQL query. No explanations."""
+            
+            prompt = ChatPromptTemplate.from_template(prompt_template)
+            chain = prompt | get_llm()
+            response = chain.invoke({
+                "schema": schema, 
+                "question": question, 
+                "prev_sql": state.get("sql", ""), 
+                "error": error
+            })
+        else:
+            # Normal Mode - Generate new SQL
+            prompt_template = """Generate a safe, efficient SQLite query.
+Schema: {schema}
+Question: {question}
+Plan: {plan}
+
+Rules:
+1. Read-only (SELECT only).
+2. LIMIT 1000 unless aggregation.
+3. Use CTEs for complex logic.
+
+Return ONLY the SQL query. No explanations."""
+            
+            prompt = ChatPromptTemplate.from_template(prompt_template)
+            chain = prompt | get_llm()
+            response = chain.invoke({
+                "schema": schema, 
+                "question": question, 
+                "plan": plan
+            })
+        
         sql = clean_sql(response.content)
+        
     except Exception as e:
         # Fallback for LLM errors
         return {"error": f"LLM Generation Error: {e}", "logs": logs + [{"title": "Generation Error", "content": str(e), "type": "error"}]}
