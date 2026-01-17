@@ -6,6 +6,7 @@ class SchemaManager:
         self.db_path = db_path
         self.full_schema = self._load_schema()
         self.table_names = self._load_table_names()
+        self._database_summary = None  # Lazy-loaded
 
     def _load_table_names(self):
         conn = sqlite3.connect(self.db_path)
@@ -14,6 +15,19 @@ class SchemaManager:
         tables = [row[0] for row in cursor.fetchall() if not row[0].startswith("sqlite_")]
         conn.close()
         return tables
+
+    def get_database_summary(self) -> str:
+        """Returns a human-readable summary of what the database contains."""
+        if self._database_summary:
+            return self._database_summary
+        
+        # Build summary from table names
+        tables_list = ", ".join(self.table_names)
+        summary = f"This database contains the following tables: {tables_list}."
+        
+        # Cache it
+        self._database_summary = summary
+        return summary
 
     def _load_schema(self):
         conn = sqlite3.connect(self.db_path)

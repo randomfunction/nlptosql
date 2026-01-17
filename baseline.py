@@ -36,7 +36,7 @@ def generate_sql(question, schema):
         raise ValueError("GOOGLE_API_KEY not found in environment variables.")
         
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-flash-latest')
+    model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
     prompt = f"""
     You are a SQL expert. Convert the following natural language question into a SQL query for the Chinook database.

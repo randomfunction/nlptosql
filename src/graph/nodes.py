@@ -1,7 +1,7 @@
 import os
 import json
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from .state import AgentState
 from ..schema import SchemaManager
@@ -10,7 +10,7 @@ import sqlite3
 
 # Initialize LLM
 # Note: Switching to gemini-flash-latest to avoid 404/429 issues
-llm = ChatGoogleGenerativeAI(model="gemini-flash-latest", temperature=0)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
 DB_FILE = "Chinook_Sqlite.sqlite"
 schema_manager = SchemaManager(DB_FILE)
@@ -361,18 +361,30 @@ def node_ask_clarification(state: AgentState) -> AgentState:
     ambiguity = state.get("ambiguity", [])
     question = state["question"]
     logs = state.get("logs", [])
+    schema = state.get("relevant_schema", "")
+    
+    # Get dynamic database context
+    db_summary = schema_manager.get_database_summary()
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant. The user asked a question that is ambiguous. Ask a clarifying question to resolve the ambiguity."),
+        ("system", f"""You are a helpful assistant for a database.
+{db_summary}
+
+When the user asks an ambiguous question, ask a clarifying question that is RELEVANT to the data available in this database.
+Do NOT suggest options that are not represented in the database tables.
+
+Use the schema below to understand what data is available:
+{{schema}}
+"""),
         ("human", "Question: {question}\nAmbiguity detected: {ambiguity}")
     ])
     
     chain = prompt | llm
-    response = chain.invoke({"question": question, "ambiguity": str(ambiguity)})
+    response = chain.invoke({"question": question, "ambiguity": str(ambiguity), "schema": schema})
     
     return {
         "clarification_question": response.content,
-        "final_answer": response.content, # Expose as answer so UI shows it
+        "final_answer": response.content,  # Expose as answer so UI shows it
         "logs": logs + [{"title": "Clarification Requested", "content": response.content, "type": "clarification"}]
     }
 
