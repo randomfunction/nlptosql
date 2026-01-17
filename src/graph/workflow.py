@@ -10,12 +10,19 @@ from .nodes import (
     node_generate_answer,
     node_ask_clarification,
     node_explore_data,
-    node_generate_visualization
+    node_generate_visualization,
+    node_reject_irrelevant
 )
 
 def route_understand(state: AgentState):
     """Routing logic after Understanding."""
-    if state.get("intent") == "meta-query":
+    intent = state.get("intent")
+    
+    # Reject irrelevant questions
+    if intent == "irrelevant":
+        return "reject_irrelevant"
+    
+    if intent == "meta-query":
         return "meta_handler"
     
     if state.get("ambiguity"):
@@ -46,6 +53,7 @@ workflow.add_node("fix_sql", node_generate_sql) # Re-use generation node logic w
 workflow.add_node("generate_visualization", node_generate_visualization)
 workflow.add_node("generate_answer", node_generate_answer)
 workflow.add_node("ask_clarification", node_ask_clarification)
+workflow.add_node("reject_irrelevant", node_reject_irrelevant)
 
 # Set Entry Point
 workflow.set_entry_point("understand")
@@ -57,12 +65,14 @@ workflow.add_conditional_edges(
     {
         "meta_handler": "meta_handler",
         "get_schema": "get_schema",
-        "ask_clarification": "ask_clarification"
+        "ask_clarification": "ask_clarification",
+        "reject_irrelevant": "reject_irrelevant"
     }
 )
 
 workflow.add_edge("meta_handler", END)
 workflow.add_edge("ask_clarification", END)
+workflow.add_edge("reject_irrelevant", END)
 
 workflow.add_edge("get_schema", "explore_data")
 workflow.add_edge("explore_data", "plan")

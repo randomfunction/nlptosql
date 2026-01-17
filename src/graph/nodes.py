@@ -6,33 +6,107 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from .state import AgentState
 from ..schema import SchemaManager
 from ..validator import validate_sql, validate_result
+from ..vector_store import VectorStore
 import sqlite3
-
-# Initialize LLM
-# Note: Switching to gemini-flash-latest to avoid 404/429 issues
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
 DB_FILE = "Chinook_Sqlite.sqlite"
 schema_manager = SchemaManager(DB_FILE)
 
+# Lazy-loaded LLM (initialized after env is loaded)
+_llm = None
+
+def get_llm():
+    global _llm
+    if _llm is None:
+        _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
+    return _llm
+
+# Initialize Vector Store for RAG-based schema selection
+_vector_store = None
+
+def get_vector_store():
+    global _vector_store
+    if _vector_store is None:
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if api_key:
+            try:
+                print("[INIT] Initializing Vector Store...")
+                _vector_store = VectorStore(api_key)
+                _index_schema_to_vector_store(_vector_store)
+            except Exception as e:
+                print(f"[WARN] Vector Store init failed: {e}")
+                import traceback
+                traceback.print_exc()
+    return _vector_store
+
+def _index_schema_to_vector_store(vs: VectorStore):
+    """Index all tables into the vector store."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    tables_data = []
+    for table in schema_manager.table_names:
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = cursor.fetchall()
+        
+        # Build DDL-like representation
+        cols_str = ", ".join([f"{col[1]} {col[2]}" for col in columns])
+        ddl = f"CREATE TABLE {table} ({cols_str})"
+        
+        # Get foreign keys for context
+        cursor.execute(f"PRAGMA foreign_key_list({table})")
+        fks = cursor.fetchall()
+        desc = ""
+        if fks:
+            desc = "Foreign Keys: " + ", ".join([f"{fk[3]} -> {fk[2]}.{fk[4]}" for fk in fks])
+        
+        tables_data.append({
+            "name": table,
+            "description": desc,
+            "ddl": ddl
+        })
+    
+    conn.close()
+    vs.index_schema(tables_data)
+    
+    # Also index few-shot examples
+    try:
+        from ..examples_data import EXAMPLES
+        vs.index_examples(EXAMPLES)
+    except ImportError:
+        print("⚠️ examples_data.py not found. Skipping example indexing.")
+
 def node_understand_query(state: AgentState) -> AgentState:
     """Classifies intent and complexity."""
-    print("🔍 [Node] Understanding Query...")
+    print("[INFO] Understanding Query...")
     question = state["question"]
     logs = state.get("logs", [])
     
+    # Get database context for relevance check
+    db_tables = ", ".join(schema_manager.table_names)
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a SQL expert AI. Analyze the user question.
-        Return a JSON object with:
-        - "intent": "aggregation", "filtering", "join", "meta-query", or "general"
-        - "complexity": "simple", "moderate", or "complex"
-        - "entities": list of table names or entities mentioned
-        - "ambiguity": list of ambiguous terms
-        """),
+        ("system", f"""You are a SQL expert AI for a database containing: {db_tables}
+
+Analyze the user question and determine if it can be answered using this database.
+
+Return a JSON object with:
+- "intent": one of:
+  - "aggregation" - counting, summing, averaging
+  - "filtering" - finding specific records
+  - "join" - combining multiple tables
+  - "meta-query" - asking about database structure
+  - "irrelevant" - question NOT related to this database (e.g., greetings, general knowledge, unrelated topics)
+  - "general" - simple database query
+- "complexity": "simple", "moderate", or "complex"
+- "entities": list of database entities/tables mentioned
+- "ambiguity": list of ambiguous terms
+- "rejection_reason": if intent is "irrelevant", explain why (e.g., "This is a greeting, not a database query")
+"""),
         ("human", "{question}")
     ])
     
-    chain = prompt | llm
+    chain = prompt | get_llm()
     try:
         response = chain.invoke({"question": question})
         content = response.content.replace("```json", "").replace("```", "").strip()
@@ -49,6 +123,7 @@ def node_understand_query(state: AgentState) -> AgentState:
             "complexity": data.get("complexity"),
             "entities": data.get("entities", []),
             "ambiguity": data.get("ambiguity", []),
+            "rejection_reason": data.get("rejection_reason"),
             "logs": logs + [log_entry]
         }
     except Exception as e:
@@ -57,9 +132,22 @@ def node_understand_query(state: AgentState) -> AgentState:
             "logs": logs + [{"title": "Understanding Error", "content": str(e), "type": "error"}]
         }
 
+def node_reject_irrelevant(state: AgentState) -> AgentState:
+    """Politely rejects irrelevant questions."""
+    reason = state.get("rejection_reason", "This question is not related to the database.")
+    logs = state.get("logs", [])
+    
+    response = f"I'm sorry, I can only answer questions about the database. {reason}\n\nThis database contains information about: {', '.join(schema_manager.table_names)}.\n\nTry asking something like:\n- 'How many tracks are there?'\n- 'List all customers from USA'\n- 'Which artist has the most albums?'"
+    
+    return {
+        "final_answer": response,
+        "logs": logs + [{"title": "Query Rejected", "content": reason, "type": "warning"}]
+    }
+
 def node_meta_query(state: AgentState) -> AgentState:
     from ..meta_handler import handle_meta_query as get_meta_response
-    response = get_meta_response(state["question"], schema_manager)
+    # Pass LLM for dynamic SQL generation
+    response = get_meta_response(state["question"], schema_manager, llm=get_llm())
     return {
         "final_answer": response,
         "logs": state.get("logs", []) + [{"title": "Meta-Query Result", "content": response, "type": "result"}]
@@ -116,7 +204,7 @@ def node_generate_visualization(state: AgentState) -> AgentState:
         ("human", "Columns: {cols}\nSample Data: {sample}")
     ])
     
-    chain = mapper_prompt | llm
+    chain = mapper_prompt | get_llm()
     try:
         response = chain.invoke({"cols": str(cols), "sample": str(sample)})
         clean = response.content.replace("```json", "").replace("```", "").strip()
@@ -175,12 +263,44 @@ def node_generate_visualization(state: AgentState) -> AgentState:
         return {"logs": state.get("logs", []) + [{"title": "Viz Error", "content": str(e), "type": "warning"}]}
 
 def node_get_schema(state: AgentState) -> AgentState:
+    """Retrieves relevant schema using Vector Store (RAG) or falls back to LLM."""
+    question = state["question"]
+    logs = state.get("logs", [])
+    
+    vs = get_vector_store()
+    
+    if vs:
+        try:
+            print("🔍 [Node] Retrieving schema via Vector Store...")
+            # Get top 5 relevant tables via vector similarity
+            related_tables = vs.get_related_tables(question, k=5)
+            
+            if related_tables:
+                relevant_schema = "\n\n".join(related_tables)
+                
+                # Parse table names for log
+                tables = [line for line in relevant_schema.split('\n') if line.startswith('Table:')]
+                
+                logs.append({
+                    "title": "Schema Retrieved (Vector Search)", 
+                    "content": '\n'.join(tables), 
+                    "type": "schema"
+                })
+                
+                return {"relevant_schema": relevant_schema, "logs": logs}
+        except Exception as e:
+            print(f"⚠️ Vector search failed: {e}")
+            logs.append({"title": "Vector Search Error", "content": str(e), "type": "warning"})
+    
+    # Fallback to LLM-based selection
+    print("[INFO] Falling back to LLM schema selection...")
+    
     class Adapter:
         def generate_content(self, prompt):
-            return llm.invoke(prompt).content
+            return get_llm().invoke(prompt).content
 
     relevant_schema = schema_manager.get_relevant_tables(
-        state["question"], 
+        question, 
         state.get("complexity", "moderate"), 
         Adapter()
     )
@@ -191,7 +311,7 @@ def node_get_schema(state: AgentState) -> AgentState:
     
     return {
         "relevant_schema": relevant_schema,
-        "logs": state.get("logs", []) + [{"title": "Relevant Schema", "content": '\n'.join(tables), "type": "schema"}]
+        "logs": logs + [{"title": "Relevant Schema (LLM)", "content": '\n'.join(tables), "type": "schema"}]
     }
 
 def node_generate_plan(state: AgentState) -> AgentState:
@@ -206,7 +326,7 @@ def node_generate_plan(state: AgentState) -> AgentState:
         ("human", "Schema:\n{schema}\n\nQuestion: {question}")
     ])
     
-    chain = prompt | llm
+    chain = prompt | get_llm()
     response = chain.invoke({"schema": schema, "question": question})
     return {
         "plan": response.content,
@@ -234,7 +354,7 @@ def node_generate_sql(state: AgentState) -> AgentState:
         Return ONLY the corrected SQL.
         """
         prompt = ChatPromptTemplate.from_template(prompt_template)
-        chain = prompt | llm
+        chain = prompt | get_llm()
         response = chain.invoke({
             "schema": schema, 
             "question": question, 
@@ -257,7 +377,7 @@ def node_generate_sql(state: AgentState) -> AgentState:
         Return ONLY the SQL.
         """
     prompt = ChatPromptTemplate.from_template(prompt_template)
-    chain = prompt | llm
+    chain = prompt | get_llm()
     
     def clean_sql(text: str) -> str:
         import re
@@ -347,7 +467,7 @@ def node_generate_answer(state: AgentState) -> AgentState:
         ("human", "Question: {question}\nResults (preview): {results}")
     ])
     
-    chain = prompt | llm
+    chain = prompt | get_llm()
     try:
         response = chain.invoke({"question": question, "results": str(preview)})
         return {
@@ -379,7 +499,7 @@ Use the schema below to understand what data is available:
         ("human", "Question: {question}\nAmbiguity detected: {ambiguity}")
     ])
     
-    chain = prompt | llm
+    chain = prompt | get_llm()
     response = chain.invoke({"question": question, "ambiguity": str(ambiguity), "schema": schema})
     
     return {
@@ -416,7 +536,7 @@ def node_explore_data(state: AgentState) -> AgentState:
         ("human", "Entities: {entities}")
     ])
     
-    chain = prompt | llm
+    chain = prompt | get_llm()
     try:
         response = chain.invoke({"schema": relevant_schema, "entities": str(entities)})
         mapping_str = response.content.replace("```json", "").replace("```", "").strip()
