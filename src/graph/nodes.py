@@ -5,8 +5,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from .state import AgentState
 from ..schema import SchemaManager
-from ..validator import validate_sql, validate_result
-from ..vector_store import VectorStore
+from ..validator import validate_sql, validate_result, enforce_limit
+from ..utils import retry_with_timeout, logger
+try:
+    from ..vector_store import VectorStore
+except ImportError:
+    VectorStore = None
 import sqlite3
 
 DB_FILE = "Chinook_Sqlite.sqlite"
@@ -371,12 +375,17 @@ Return ONLY the corrected SQL query. No explanations."""
             
             prompt = ChatPromptTemplate.from_template(prompt_template)
             chain = prompt | get_llm()
-            response = chain.invoke({
-                "schema": schema, 
-                "question": question, 
-                "prev_sql": state.get("sql", ""), 
-                "error": error
-            })
+            
+            logger.info(f"Retrying SQL Generation for error: {error}")
+            response = retry_with_timeout(
+                lambda: chain.invoke({
+                    "schema": schema, 
+                    "question": question, 
+                    "prev_sql": state.get("sql", ""), 
+                    "error": error
+                }), 
+                max_retries=2, timeout_sec=20
+            )
         else:
             # Normal Mode - Generate new SQL
             prompt_template = """Generate a safe, efficient SQLite query.
@@ -393,15 +402,22 @@ Return ONLY the SQL query. No explanations."""
             
             prompt = ChatPromptTemplate.from_template(prompt_template)
             chain = prompt | get_llm()
-            response = chain.invoke({
-                "schema": schema, 
-                "question": question, 
-                "plan": plan
-            })
+            
+            logger.info(f"Generating SQL for question: {question}")
+            response = retry_with_timeout(
+                lambda: chain.invoke({
+                    "schema": schema, 
+                    "question": question, 
+                    "plan": plan
+                }),
+                max_retries=2, timeout_sec=20
+            )
         
         sql = clean_sql(response.content)
+        sql = enforce_limit(sql)
         
     except Exception as e:
+        logger.error(f"LLM Generation Error: {str(e)}")
         # Fallback for LLM errors
         return {"error": f"LLM Generation Error: {e}", "logs": logs + [{"title": "Generation Error", "content": str(e), "type": "error"}]}
     
@@ -418,19 +434,25 @@ def node_execute_validate(state: AgentState) -> AgentState:
     # 1. Syntax/Safety Validation
     is_valid, msg = validate_sql(sql)
     if not is_valid:
+        logger.warning(f"SQL Validation failed: {msg}")
         return {"error": f"Validation Failed: {msg}", "attempts": state.get("attempts", 0) + 1}
         
-    # 2. Execution
-    try:
+    # 2. Execution with timeout protection
+    def execute_db():
         conn = sqlite3.connect(DB_FILE)
+        conn.execute("PRAGMA busy_timeout = 3000") # Setup safe locking
         cursor = conn.cursor()
         cursor.execute(sql)
-        cols = [desc[0] for desc in cursor.description]
+        cols = [desc[0] for desc in cursor.description] if cursor.description else []
         rows = cursor.fetchall()
         conn.close()
+        return cols, rows
+
+    try:
+        cols, rows = retry_with_timeout(execute_db, max_retries=1, timeout_sec=10)
+        results = [cols] + rows if cols else []
         
-        results = [cols] + rows
-        
+        logger.info(f"Execution Success. Rows returned: {len(rows)}")
         return {
             "results": results, 
             "error": None,
@@ -438,7 +460,8 @@ def node_execute_validate(state: AgentState) -> AgentState:
         }
         
     except Exception as e:
-        return {"error": str(e), "attempts": state.get("attempts", 0) + 1}
+        logger.error(f"Execution Error: {str(e)}")
+        return {"error": f"Execution Error: {str(e)}", "attempts": state.get("attempts", 0) + 1}
 
 def node_generate_answer(state: AgentState) -> AgentState:
     question = state["question"]
