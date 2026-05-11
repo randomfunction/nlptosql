@@ -1,7 +1,13 @@
 fastapi
 uvicorn
 python-dotenv
+pydantic-settings
 langchain-google-genai
 langchain-core
 langgraph
 sqlparse
+pytest
+pytest-asyncio
+prometheus-fastapi-instrumentator
+aiosqlite
+redis

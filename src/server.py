@@ -20,11 +20,23 @@ class QueryRequest(BaseModel):
 
 from fastapi.responses import StreamingResponse
 import json
-
 import time
-from src.utils import logger, metrics
+from src.core.config import settings
+from src.core.logger import logger
+from src.services.cache import cache_service
+from prometheus_fastapi_instrumentator import Instrumentator
+from fastapi import Request, HTTPException, Depends
 
-@app.post("/api/query")
+# Expose Prometheus Metrics
+Instrumentator().instrument(app).expose(app)
+
+async def verify_api_key(request: Request):
+    if settings.API_KEY:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or auth_header != f"Bearer {settings.API_KEY}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+@app.post("/api/query", dependencies=[Depends(verify_api_key)])
 async def run_query(request: QueryRequest):
     start_time = time.time()
     logger.info(f"Received query: {request.question}")
@@ -65,19 +77,18 @@ async def run_query(request: QueryRequest):
             yield json.dumps({"type": "error", "data": "An unexpected error occurred while processing your request."}) + "\n"
         finally:
             duration = time.time() - start_time
-            metrics.record_request(success, duration)
             logger.info(f"Query completed in {duration:.2f}s with success={success}")
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
-@app.get("/api/metrics")
+@app.get("/api/metrics/legacy")
 async def get_metrics():
-    return metrics.get_stats()
+    return {"status": "deprecated, use /metrics for prometheus"}
 
 @app.get("/api/schema")
 async def get_schema():
-    from src.graph.nodes import schema_manager
-    return schema_manager.get_structured_schema()
+    from src.services.schema import schema_service
+    return await schema_service.get_structured_schema()
 
 # Serve static files (HTML/JS/CSS)
 app.mount("/", StaticFiles(directory="src/static", html=True), name="static")
