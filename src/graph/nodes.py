@@ -176,7 +176,7 @@ async def node_generate_answer(state: AgentState) -> AgentState:
     
     num_data_rows = len(results) - 1
     if num_data_rows > 2:
-        return {"final_answer": None} # Skip summary
+        return {}  # Skip summary when the table itself is the useful output
          
     return {"final_answer": "Here are your exact results based on the query."}
 

@@ -49,6 +49,12 @@ async def run_query(request: QueryRequest):
             # Use .astream() to avoid blocking the API thread
             async for event in graph_app.astream(initial_state, stream_mode="updates"):
                 for node_name, state_update in event.items():
+                    if not isinstance(state_update, dict):
+                        logger.warning(
+                            f"Skipping non-dict state update from {node_name}: {state_update!r}"
+                        )
+                        continue
+
                     if "logs" in state_update and state_update["logs"]:
                         latest_log = state_update["logs"][-1]
                         yield json.dumps({"type": "step", "data": latest_log}) + "\n"
@@ -56,7 +62,7 @@ async def run_query(request: QueryRequest):
                     if "results" in state_update:
                         yield json.dumps({"type": "result", "data": state_update["results"]}) + "\n"
                     
-                    if "final_answer" in state_update:
+                    if "final_answer" in state_update and state_update["final_answer"] is not None:
                         success = True
                         logger.info(f"Query answered successfully: '{request.question}'")
                         yield json.dumps({"type": "answer", "data": state_update["final_answer"]}) + "\n"
