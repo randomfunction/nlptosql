@@ -73,8 +73,18 @@ async def run_query(request: QueryRequest):
         except Exception as e:
             import traceback
             error_msg = str(e)
-            logger.error(f"Unhandled Server Error: {error_msg}\n{traceback.format_exc()}")
-            yield json.dumps({"type": "error", "data": "An unexpected error occurred while processing your request."}) + "\n"
+            error_type = type(e).__name__
+            trace = traceback.format_exc()
+            logger.error(
+                f"Unhandled Server Error [{error_type}]: {error_msg}\n{trace}"
+            )
+            client_message = (
+                f"{error_type}: {error_msg}"
+                if settings.DEBUG
+                else f"{error_type}: {error_msg}. Check server logs for the full traceback."
+            )
+            yield json.dumps({"type": "error", "data": client_message}) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
         finally:
             duration = time.time() - start_time
             logger.info(f"Query completed in {duration:.2f}s with success={success}")

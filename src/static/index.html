@@ -379,6 +379,14 @@
                     body: JSON.stringify({ question })
                 });
 
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                if (!response.body) {
+                    throw new Error('Streaming response body is not available.');
+                }
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
@@ -439,7 +447,7 @@
                 renderStep({ title: "AI Summary", content: event.data, type: "summary" });
             } else if (event.type === 'error') {
                 resultArea.style.display = 'block';
-                resultContent.innerHTML += `<div style="color: red; margin-top:10px;">Error: ${event.data}</div>`;
+                resultContent.innerHTML = `<div style="color: red; margin-top:10px;">Error: ${event.data}</div>`;
             }
         }
 

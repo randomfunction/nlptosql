@@ -19,6 +19,23 @@ class GeminiProvider(BaseLLMProvider):
             api_key=api_key,
             temperature=0
         )
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        content = getattr(response, "content", response)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    parts.append(str(item["text"]))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts).strip()
+        return str(content)
         
     async def understand_query(self, db_context: str, question: str) -> Dict[str, Any]:
         prompt = ChatPromptTemplate.from_messages([
@@ -37,7 +54,7 @@ Return a JSON object with:
         chain = prompt | self.llm
         try:
             response = await chain.ainvoke({"question": question})
-            content = response.content.replace("```json", "").replace("```", "").strip()
+            content = self._response_text(response).replace("```json", "").replace("```", "").strip()
             return json.loads(content)
         except Exception as e:
             logger.error(f"Failed to understand query: {str(e)}", exc_info=True)
@@ -49,8 +66,17 @@ Return a JSON object with:
             ("human", "Schema:\n{schema}\n\nQuestion: {question}")
         ])
         chain = prompt | self.llm
-        response = await chain.ainvoke({"schema": schema, "question": question})
-        return response.content
+        try:
+            response = await chain.ainvoke({"schema": schema, "question": question})
+            return self._response_text(response)
+        except Exception as e:
+            logger.warning(f"Plan generation failed, falling back to heuristic plan: {e}")
+            return (
+                "1. Identify the relevant tables and join keys.\n"
+                "2. Filter rows needed to answer the question.\n"
+                "3. Aggregate or sort the results as needed.\n"
+                "4. Return the smallest result set needed to answer the question."
+            )
 
     async def generate_sql(self, schema: str, question: str, plan: str, prev_sql: str = "", error: str = "") -> str:
         if error:
@@ -75,9 +101,12 @@ Return ONLY the SQL query. No explanations."""
 
         prompt = ChatPromptTemplate.from_template(prompt_template)
         chain = prompt | self.llm
-        
-        response = await chain.ainvoke(params)
-        return response.content
+        try:
+            response = await chain.ainvoke(params)
+            return self._response_text(response)
+        except Exception as e:
+            logger.error(f"SQL generation failed: {e}", exc_info=True)
+            raise RuntimeError(f"SQL generation failed: {e}") from e
 
     async def generate_visualization_config(self, question: str, columns: list, sample_data: list) -> Dict[str, Any]:
         prompt = ChatPromptTemplate.from_messages([
@@ -91,7 +120,7 @@ If not suitable, return {{}}.
         chain = prompt | self.llm
         try:
             response = await chain.ainvoke({"cols": str(columns), "sample": str(sample_data)})
-            clean = response.content.replace("```json", "").replace("```", "").strip()
+            clean = self._response_text(response).replace("```json", "").replace("```", "").strip()
             return json.loads(clean)
         except Exception as e:
             logger.warning(f"Failed to generate visualization config: {e}")
