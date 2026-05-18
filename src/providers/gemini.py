@@ -8,9 +8,15 @@ from src.core.logger import logger
 
 class GeminiProvider(BaseLLMProvider):
     def __init__(self):
+        api_key = settings.GEMINI_API_KEY or settings.GOOGLE_API_KEY
+        if not api_key:
+            raise RuntimeError(
+                "Gemini API key is missing. Set GEMINI_API_KEY or GOOGLE_API_KEY."
+            )
+
         self.llm = ChatGoogleGenerativeAI(
             model=settings.GEMINI_MODEL,
-            api_key=settings.GEMINI_API_KEY,
+            api_key=api_key,
             temperature=0
         )
         

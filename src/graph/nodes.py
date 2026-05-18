@@ -7,8 +7,15 @@ from src.services.executor import QueryExecutor
 from src.services.cache import cache_service
 from src.core.logger import logger
 
-provider = GeminiProvider()
+provider = None
 executor = QueryExecutor()
+
+
+def get_provider() -> GeminiProvider:
+    global provider
+    if provider is None:
+        provider = GeminiProvider()
+    return provider
 
 async def node_understand_query(state: AgentState) -> AgentState:
     logger.info("Node: Understanding Query...")
@@ -16,7 +23,7 @@ async def node_understand_query(state: AgentState) -> AgentState:
     logs = state.get("logs", [])
     
     db_summary = await schema_service.get_database_summary()
-    analysis = await provider.understand_query(db_summary, question)
+    analysis = await get_provider().understand_query(db_summary, question)
     
     log_entry = {
         "title": "Understanding", 
@@ -38,7 +45,11 @@ async def node_get_schema(state: AgentState) -> AgentState:
     question = state["question"]
     logs = state.get("logs", [])
     
-    relevant_schema = await schema_service.get_relevant_tables(question, state.get("complexity", "moderate"), provider)
+    relevant_schema = await schema_service.get_relevant_tables(
+        question,
+        state.get("complexity", "moderate"),
+        get_provider(),
+    )
     
     lines = relevant_schema.split('\n')
     tables = [l for l in lines if l.startswith('Table:')]
@@ -56,7 +67,7 @@ async def node_generate_plan(state: AgentState) -> AgentState:
     question = state["question"]
     schema = state["relevant_schema"]
     
-    plan = await provider.generate_plan(schema, question)
+    plan = await get_provider().generate_plan(schema, question)
     
     return {
         "plan": plan,
@@ -82,7 +93,13 @@ async def node_generate_sql(state: AgentState) -> AgentState:
                 "logs": logs + [{"title": "Generated SQL (Cached)", "content": cached_sql, "type": "sql"}]
             }
             
-    sql = await provider.generate_sql(schema, question, plan, prev_sql=prev_sql, error=error)
+    sql = await get_provider().generate_sql(
+        schema,
+        question,
+        plan,
+        prev_sql=prev_sql,
+        error=error,
+    )
     
     if not error:
         await cache_service.set_cached_query(question, sql)
@@ -121,7 +138,7 @@ async def node_generate_visualization(state: AgentState) -> AgentState:
     data = results[1:]
     sample = [cols] + data[:5]
     
-    config = await provider.generate_visualization_config(state["question"], cols, sample)
+    config = await get_provider().generate_visualization_config(state["question"], cols, sample)
     if not config or "chart_type" not in config:
         return {}
         
