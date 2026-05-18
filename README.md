@@ -1,4 +1,4 @@
-# 🧠 Agentic Text-to-SQL Pipeline
+# Agentic Text-to-SQL Pipeline
 
 A production-grade, highly concurrent Natural Language to SQL generation engine built with **LangGraph**, **FastAPI**, and **Asyncio**. 
 
@@ -9,7 +9,7 @@ Designed for scalability, low latency, and deterministic execution accuracy, thi
 ![FastAPI](https://img.shields.io/badge/FastAPI-Async-green)
 ![Redis](https://img.shields.io/badge/Redis-Caching-red)
 
-## 🎯 Engineering Objectives
+## Engineering Objectives
 
 - **Concurrency & Non-blocking I/O:** Migrated from synchronous execution to an `async/await` foundation using `aiosqlite` and asynchronous LLM providers.
 - **Provider Agnosticism:** Abstracted LLM interactions into a `BaseLLMProvider` interface to prevent vendor lock-in (supporting Gemini, OpenAI, etc.).
@@ -19,7 +19,7 @@ Designed for scalability, low latency, and deterministic execution accuracy, thi
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 The architecture isolates concerns across the API, Service, Data, and Orchestration layers.
 
@@ -47,7 +47,7 @@ graph TD
     SchemaSvc --> SQLite
 ```
 
-### 🔁 The Orchestration DAG (LangGraph)
+### The Orchestration DAG (LangGraph)
 Our query lifecycle maps to a strict Directed Acyclic Graph:
 1. **Understanding:** Intent classification & relevance gating.
 2. **Schema Retrieval:** Fetches subset schema context mapping to identified entities.
@@ -58,7 +58,7 @@ Our query lifecycle maps to a strict Directed Acyclic Graph:
 
 ---
 
-## 📊 Benchmarks & Evaluation Framework
+## Benchmarks & Evaluation Framework
 
 We utilize a reproducible evaluation pipeline (`scripts/evaluate.py`) against subsets of the **Spider** and **WikiSQL** datasets. 
 
@@ -86,7 +86,7 @@ python scripts/evaluate.py
 
 ---
 
-## 🚀 Infrastructure & Deployment
+## Infrastructure & Deployment
 
 We support containerized deployments utilizing `docker-compose`. The stack launches the FastAPI server, the Redis cache, and a Prometheus monitoring daemon.
 
@@ -120,7 +120,7 @@ This deploys:
 
 ---
 
-## 📈 Observability & Logging
+## Observability & Logging
 
 - **Metrics Endpoint:** Visit `/metrics` to view Prometheus scrape targets including query success rates, latency distributions, and total token usage.
 - **Structured Logs:** All modules output structured JSON compatible with ELK or Datadog ingestion:
@@ -135,8 +135,3 @@ This deploys:
 }
 ```
 
-## 📄 Code Quality Standards
-- **Typing:** Fully MyPy compliant.
-- **Interfaces:** `abc.ABC` applied to external providers.
-- **Asynchronous Data Access:** Non-blocking DB drivers (`aiosqlite`).
-- **Configuration Management:** Centralized in `src/core/config.py`.
