@@ -36,6 +36,20 @@ class GeminiProvider(BaseLLMProvider):
                     parts.append(str(item))
             return "\n".join(parts).strip()
         return str(content)
+
+    @staticmethod
+    def _clean_sql(sql: str) -> str:
+        cleaned = sql.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if lines:
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+        if cleaned.lower().startswith("sql\n"):
+            cleaned = cleaned[4:].strip()
+        return cleaned
         
     async def understand_query(self, db_context: str, question: str) -> Dict[str, Any]:
         prompt = ChatPromptTemplate.from_messages([
@@ -103,7 +117,7 @@ Return ONLY the SQL query. No explanations."""
         chain = prompt | self.llm
         try:
             response = await chain.ainvoke(params)
-            return self._response_text(response)
+            return self._clean_sql(self._response_text(response))
         except Exception as e:
             logger.error(f"SQL generation failed: {e}", exc_info=True)
             raise RuntimeError(f"SQL generation failed: {e}") from e

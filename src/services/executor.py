@@ -9,9 +9,25 @@ class QueryExecutor:
     
     def __init__(self, db_path: str = settings.DB_FILE):
         self.db_path = db_path
+
+    @staticmethod
+    def _normalize_sql(sql: str) -> str:
+        cleaned = sql.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if lines:
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+        if cleaned.lower().startswith("sql\n"):
+            cleaned = cleaned[4:].strip()
+        return cleaned
         
     async def execute_safe(self, sql: str) -> Tuple[List[str], List[tuple]]:
         """Executes a SQL query asynchronously with timeout and limits."""
+        sql = self._normalize_sql(sql)
+
         # Safety Check: Enforce Read-Only at application layer
         sql_upper = sql.upper()
         dangerous_keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "GRANT", "REVOKE"]
